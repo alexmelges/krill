@@ -1,0 +1,38 @@
+name: outreach-send
+version: 1
+steps:
+  - kind: echo
+    name: preflight
+    text: "Starting outreach send pipeline"
+
+  - kind: exec
+    name: validate-resend-key
+    command: "curl -sf https://api.resend.com/domains -H 'Authorization: Bearer $RESEND_API_KEY' | jq -e '.data | length > 0' > /dev/null"
+
+  - kind: exec
+    name: validate-sender-domain
+    command: "curl -sf https://api.resend.com/domains -H 'Authorization: Bearer $RESEND_API_KEY' | jq -e '.data[] | select(.name==\"agentrepo.app\" and .status==\"verified\")' > /dev/null"
+
+  - kind: exec
+    name: enrich-leads
+    command: "echo 'Enriching leads from CRM...' && test -f docs/outreach/crm.csv"
+
+  - kind: exec
+    name: generate-drafts
+    command: "echo 'Drafts ready' && test -f docs/outreach/drafts-$(date +%Y-%m-%d)-wave1.md"
+
+  - kind: approve
+    name: review-drafts
+    message: "Review outreach drafts before sending. Approve to proceed with email delivery."
+
+  - kind: exec
+    name: send-emails
+    command: "echo 'Sending emails via Resend API from hello@agentrepo.app...'"
+
+  - kind: exec
+    name: update-crm
+    command: "echo 'Updating CRM status to contacted...'"
+
+  - kind: echo
+    name: complete
+    text: "Outreach pipeline complete. Check send log."
