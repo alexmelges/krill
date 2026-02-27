@@ -1,0 +1,42 @@
+name: deploy-with-gates
+version: 1
+steps:
+  - kind: echo
+    name: start
+    text: "Deploy pipeline initiated"
+
+  - kind: exec
+    name: build
+    command: "echo '[build] Building production image'"
+
+  - kind: exec
+    name: test
+    command: "echo '[test] Running smoke tests — all passed'"
+
+  - kind: approve
+    name: staging-gate
+    message: "Tests passed. Deploy to staging?"
+
+  - kind: exec
+    name: deploy-staging
+    command: "echo '[deploy] Deploying to staging environment'"
+
+  - kind: exec
+    name: staging-healthcheck
+    command: "echo '[health] Staging healthcheck passed — 200 OK'"
+
+  - kind: approve
+    name: production-gate
+    message: "Staging is healthy. Deploy to production?"
+
+  - kind: exec
+    name: deploy-production
+    command: "echo '[deploy] Deploying to production environment'"
+
+  - kind: exec
+    name: production-healthcheck
+    command: "echo '[health] Production healthcheck passed — 200 OK'"
+
+  - kind: echo
+    name: done
+    text: "Deployment complete. All environments healthy."

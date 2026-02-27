@@ -1,0 +1,30 @@
+name: build-pipeline
+version: 1
+steps:
+  - kind: echo
+    name: start
+    text: "Starting build pipeline"
+
+  - kind: exec
+    name: clean
+    command: "echo '[clean] Removing build artifacts'"
+
+  - kind: exec
+    name: build
+    command: "echo '[build] Compiling project'"
+
+  - kind: exec
+    name: test-unit
+    command: "echo '[test] Running unit tests — 42 passed'"
+
+  - kind: exec
+    name: test-integration
+    command: "echo '[test] Running integration tests — 7 passed'"
+
+  - kind: exec
+    name: package
+    command: "echo '[package] Creating release artifact: app-0.1.0.tar.gz'"
+
+  - kind: echo
+    name: done
+    text: "Build pipeline complete. Artifact ready."
