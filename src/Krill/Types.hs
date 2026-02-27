@@ -1,5 +1,6 @@
 module Krill.Types
   ( ApprovalGate (..),
+    HttpStep (..),
     RunLog (..),
     RunState (..),
     RunStatus (..),
@@ -31,6 +32,22 @@ data Step
       { stepName :: Maybe Text,
         stepGate :: ApprovalGate
       }
+  | StepHttp
+      { stepName :: Maybe Text,
+        stepHttp :: HttpStep
+      }
+  | StepEnv
+      { stepName :: Maybe Text,
+        stepEnvRequired :: [Text]
+      }
+  deriving (Eq, Show)
+
+data HttpStep = HttpStep
+  { httpMethod :: Text,
+    httpUrl :: Text,
+    httpHeaders :: [(Text, Text)],
+    httpBody :: Maybe Text
+  }
   deriving (Eq, Show)
 
 data ApprovalGate = ApprovalGate

@@ -33,6 +33,17 @@ Current variants:
 - `exec`: run a shell command
 - `echo`: print text
 - `approve`: require an explicit approval decision
+- `http`: make an HTTP request (method, url, headers, body)
+- `env`: validate required environment variables
+
+### `HttpStep`
+HTTP request configuration for `http` step type.
+
+Fields:
+- `httpMethod`: HTTP method (GET, POST, PUT, DELETE, etc.)
+- `httpUrl`: Target URL
+- `httpHeaders`: Optional headers as key-value pairs
+- `httpBody`: Optional request body
 
 ### `ApprovalGate`
 Typed representation of a required human-or-policy decision boundary.
@@ -76,6 +87,17 @@ Deterministic sequencing guarantees:
 - logs are emitted in execution order as line-delimited JSON
 
 This model keeps outcomes reproducible and easy to reason about during incident review.
+
+## Variable Interpolation
+Krill supports environment variable interpolation in step fields using `${VAR_NAME}` syntax.
+
+Supported fields:
+- `echo.text`: Interpolates variables in text output
+- `exec.command`: Interpolates variables in shell commands
+- `http.url`: Interpolates variables in URLs
+- `http.body`: Interpolates variables in request bodies
+
+If a variable is not set, it is replaced with an empty string.
 
 ## Safety Model
 Krill enforces approval boundaries at runtime via `approve` steps.

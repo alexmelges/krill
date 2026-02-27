@@ -1,0 +1,15 @@
+name: http-example
+version: 1
+steps:
+  - kind: http
+    name: health-check
+    method: GET
+    url: "http://localhost:8080/health"
+  - kind: http
+    name: post-data
+    method: POST
+    url: "http://localhost:8080/api/data"
+    body: '{"message": "Hello from krill"}'
+  - kind: echo
+    name: done
+    text: "HTTP workflow complete"

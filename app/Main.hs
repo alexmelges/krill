@@ -7,7 +7,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Krill.Parse (ParseError (..), parseWorkflowFile)
 import Krill.Run (RunFailure (..), RunOutcome (..), defaultRunConfig, runWorkflow)
-import Krill.Types (RunState (runStatus), RunStatus (RunSucceeded))
+import Krill.Types (ApprovalGate (..), HttpStep (..), RunState (runStatus), RunStatus (RunSucceeded), Step (..), Workflow (..), workflowSteps)
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
 import System.IO (stderr)
@@ -18,7 +18,8 @@ data Command
 
 data RunOptions = RunOptions
   { runFile :: FilePath,
-    runAutoApproveFlag :: Bool
+    runAutoApproveFlag :: Bool,
+    runDryRunFlag :: Bool
   }
 
 main :: IO ()
@@ -32,7 +33,7 @@ main = do
     Right command -> runCommand command
 
 parseArgs :: [String] -> Either Text Command
-parseArgs ("run" : rest) = RunCommand <$> parseRunOptions rest (RunOptions "" False)
+parseArgs ("run" : rest) = RunCommand <$> parseRunOptions rest (RunOptions "" False False)
 parseArgs ("validate" : rest) = ValidateCommand <$> parseValidateOptions rest
 parseArgs _ = Left "Expected subcommand: run | validate"
 
@@ -46,6 +47,8 @@ parseRunOptions ("-f" : path : rest) options =
   parseRunOptions rest options {runFile = path}
 parseRunOptions ("--auto-approve" : rest) options =
   parseRunOptions rest options {runAutoApproveFlag = True}
+parseRunOptions ("--dry-run" : rest) options =
+  parseRunOptions rest options {runDryRunFlag = True}
 parseRunOptions (arg : _) _ = Left ("Unknown run option: " <> tshow arg)
 
 parseValidateOptions :: [String] -> Either Text FilePath
@@ -66,20 +69,25 @@ runCommand (RunCommand options) = do
   parsed <- parseWorkflowFile (runFile options)
   case parsed of
     Left parseError -> reportParseError parseError
-    Right workflow -> do
-      config <- defaultRunConfig (runAutoApproveFlag options)
-      runResult <- runWorkflow config workflow
-      case runResult of
-        Left failure -> do
-          TIO.hPutStrLn stderr ("Run failed: " <> runFailureMessage failure)
-          putStrLn ("Run log: " <> runFailureLogPath failure)
-          exitFailure
-        Right outcome -> do
-          putStrLn "Run completed successfully."
-          putStrLn ("Run log: " <> runOutcomeLogPath outcome)
-          if runStatus (runOutcomeState outcome) == RunSucceeded
-            then exitSuccess
-            else exitFailure
+    Right workflow
+      | runDryRunFlag options -> do
+          putStrLn "Dry run mode - workflow would execute the following steps:"
+          mapM_ (putStrLn . T.unpack . describeStep) (workflowSteps workflow)
+          exitSuccess
+      | otherwise -> do
+          config <- defaultRunConfig (runAutoApproveFlag options)
+          runResult <- runWorkflow config workflow
+          case runResult of
+            Left failure -> do
+              TIO.hPutStrLn stderr ("Run failed: " <> runFailureMessage failure)
+              putStrLn ("Run log: " <> runFailureLogPath failure)
+              exitFailure
+            Right outcome -> do
+              putStrLn "Run completed successfully."
+              putStrLn ("Run log: " <> runOutcomeLogPath outcome)
+              if runStatus (runOutcomeState outcome) == RunSucceeded
+                then exitSuccess
+                else exitFailure
 
 reportParseError :: ParseError -> IO a
 reportParseError parseError = do
@@ -91,8 +99,20 @@ usageText =
   T.unlines
     [ "Usage:",
       "  krill validate --file <PATH>",
-      "  krill run --file <PATH> [--auto-approve]"
+      "  krill run --file <PATH> [--auto-approve] [--dry-run]"
     ]
 
 tshow :: Show a => a -> Text
 tshow = T.pack . show
+
+describeStep :: Step -> Text
+describeStep StepExec {stepName, stepCommand} = 
+  "  - exec" <> (case stepName of Nothing -> ""; Just n -> " [" <> n <> "]") <> ": " <> stepCommand
+describeStep StepEcho {stepName, stepText} = 
+  "  - echo" <> (case stepName of Nothing -> ""; Just n -> " [" <> n <> "]") <> ": " <> stepText
+describeStep StepApprove {stepName, stepGate} = 
+  "  - approve" <> (case stepName of Nothing -> ""; Just n -> " [" <> n <> "]") <> ": " <> approvalMessage stepGate
+describeStep StepHttp {stepName, stepHttp} = 
+  "  - http" <> (case stepName of Nothing -> ""; Just n -> " [" <> n <> "]") <> ": " <> httpMethod stepHttp <> " " <> httpUrl stepHttp
+describeStep StepEnv {stepName, stepEnvRequired} = 
+  "  - env" <> (case stepName of Nothing -> ""; Just n -> " [" <> n <> "]") <> ": require " <> T.intercalate ", " stepEnvRequired

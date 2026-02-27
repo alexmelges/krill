@@ -8,6 +8,7 @@ module Krill.Parse
 where
 
 import Control.Monad (unless)
+import Data.Maybe (mapMaybe)
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -16,7 +17,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8')
-import Krill.Types (ApprovalGate (..), Step (..), Workflow (..))
+import Krill.Types (ApprovalGate (..), HttpStep (..), Step (..), Workflow (..))
 import Text.Parsec
   ( anyChar,
     between,
@@ -172,8 +173,46 @@ stepFromJsonValue (JObject pairs) = do
     "approve" -> do
       message <- fromMaybe "Approval required" <$> optionalText "message" pairs
       pure (StepApprove stepName (ApprovalGate message))
+    "http" -> do
+      httpStep <- parseHttpStep pairs
+      pure (StepHttp stepName httpStep)
+    "env" -> do
+      required <- parseEnvRequired pairs
+      pure (StepEnv stepName required)
     _ -> Left (ParseError ("unsupported step kind: " <> kind))
 stepFromJsonValue _ = Left (ParseError "each step must be an object")
+
+parseHttpStep :: [(Text, JValue)] -> ParseResult HttpStep
+parseHttpStep pairs = do
+  method <- fromMaybe "GET" <$> optionalText "method" pairs
+  url <- requiredText "url" pairs
+  headers <- parseHttpHeaders pairs
+  body <- optionalText "body" pairs
+  pure (HttpStep method url headers body)
+
+parseHttpHeaders :: [(Text, JValue)] -> ParseResult [(Text, Text)]
+parseHttpHeaders pairs = do
+  case lookup "headers" pairs of
+    Nothing -> pure []
+    Just (JObject objPairs) -> mapM parseHeaderPair objPairs
+    Just _ -> Left (ParseError "headers must be an object")
+
+parseHeaderPair :: (Text, JValue) -> ParseResult (Text, Text)
+parseHeaderPair (k, v) = do
+  case v of
+    JString t -> Right (k, t)
+    _ -> Left (ParseError ("header value for " <> k <> " must be a string"))
+
+parseEnvRequired :: [(Text, JValue)] -> ParseResult [Text]
+parseEnvRequired pairs = do
+  case lookup "required" pairs of
+    Nothing -> pure []
+    Just (JArray items) -> mapM parseEnvItem items
+    Just _ -> Left (ParseError "env required field must be an array")
+
+parseEnvItem :: JValue -> ParseResult Text
+parseEnvItem (JString t) = Right t
+parseEnvItem _ = Left (ParseError "env required items must be strings")
 
 requiredValue :: Text -> [(Text, JValue)] -> ParseResult JValue
 requiredValue key pairs =
@@ -303,9 +342,51 @@ parseYamlStep lineNo stepLine rest = do
           "approve" -> do
             let message = maybe "Approval required" parseScalar (lookup "message" fieldPairs)
             pure (StepApprove stepName (ApprovalGate message))
+          "http" -> do
+            httpStep <- parseYamlHttpStep lineNo fieldPairs
+            pure (StepHttp stepName httpStep)
+          "env" -> do
+            required <- parseYamlEnvRequired lineNo fieldPairs
+            pure (StepEnv stepName required)
           _ -> Left (ParseError ("unsupported step kind at line " <> tshow lineNo <> ": " <> kind))
 
       pure (step, remaining)
+
+parseYamlHttpStep :: Int -> [(Text, Text)] -> ParseResult HttpStep
+parseYamlHttpStep lineNo fieldPairs = do
+  method <- maybe (pure "GET") (pure . parseScalar) (lookup "method" fieldPairs)
+  url <- requiredField lineNo "url" fieldPairs
+  let urlVal = parseScalar url
+  headers <- parseYamlHttpHeaders fieldPairs
+  body <- case lookup "body" fieldPairs of
+    Nothing -> pure Nothing
+    Just b -> pure (Just (parseScalar b))
+  pure (HttpStep method urlVal headers body)
+
+parseYamlHttpHeaders :: [(Text, Text)] -> ParseResult [(Text, Text)]
+parseYamlHttpHeaders fieldPairs = do
+  case lookup "headers" fieldPairs of
+    Nothing -> pure []
+    Just raw -> parseYamlHeadersList raw
+
+parseYamlHeadersList :: Text -> ParseResult [(Text, Text)]
+parseYamlHeadersList raw = do
+  let lines1 = map T.strip (T.lines raw)
+      pairs = mapMaybe (\l -> case T.breakOn ":" l of
+        (k, v) | not (T.null k) && not (T.null v) -> Just (T.strip k, T.strip (T.drop 1 v))
+        _ -> Nothing) lines1
+  pure pairs
+
+parseYamlEnvRequired :: Int -> [(Text, Text)] -> ParseResult [Text]
+parseYamlEnvRequired lineNo fieldPairs = do
+  case lookup "required" fieldPairs of
+    Nothing -> pure []
+    Just raw -> do
+      let items = map T.strip (T.splitOn "," raw)
+          trimmedItems = filter (not . T.null) items
+      if null trimmedItems
+        then Left (ParseError ("env required field is empty at line " <> tshow lineNo))
+        else pure trimmedItems
 
 gatherStepFields :: [(Int, Text)] -> [(Text, Text)] -> ParseResult ([(Text, Text)], [(Int, Text)])
 gatherStepFields lines0 acc =

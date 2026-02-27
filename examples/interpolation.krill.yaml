@@ -1,0 +1,12 @@
+name: interpolation-example
+version: 1
+steps:
+  - kind: env
+    name: validate-env
+    required: API_KEY
+  - kind: echo
+    name: show-variable
+    text: "API_KEY is: ${API_KEY}"
+  - kind: echo
+    name: done
+    text: "Interpolation workflow complete"

@@ -36,6 +36,10 @@ This document tracks concrete delivery checklists for the first four milestones.
 ## M2: Validation and Policy Layer
 
 ### Deliverables
+- [x] Add HTTP step kind (method, url, headers, body) using http-client
+- [x] Add env step kind that validates required environment variables
+- [x] Add variable interpolation — ${VAR_NAME} from env
+- [x] Add --dry-run flag for workflow preview
 - [ ] Add static validation pass independent from decode phase
 - [ ] Enforce deterministic schema versioning and migration policy
 - [ ] Add policy model for approval requirements by step category
@@ -43,6 +47,10 @@ This document tracks concrete delivery checklists for the first four milestones.
 - [ ] Add run-time policy decision logs with explicit reason codes
 
 ### Exit Criteria
+- [x] HTTP requests work with configurable method, URL, headers, body
+- [x] Environment variable validation fails if required vars missing
+- [x] Variable interpolation replaces ${VAR_NAME} with env values
+- [x] --dry-run prints workflow steps without executing
 - [ ] Invalid workflows fail with precise, user-facing diagnostics
 - [ ] Policy-denied workflows fail before execution
 - [ ] Test matrix covers policy allow/deny and strict validation paths

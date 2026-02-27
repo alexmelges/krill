@@ -9,24 +9,63 @@ module Krill.Run
   )
 where
 
-import Control.Monad (unless)
+import Control.Exception (Exception, SomeException, catch, try)
+import Control.Monad (filterM, unless)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime)
 import Krill.Types
   ( ApprovalGate (approvalMessage),
+    HttpStep (..),
     RunLog (..),
     RunState (..),
     RunStatus (..),
     Step (..),
     Workflow (..),
   )
+import qualified Data.ByteString.Lazy as BSL
+import qualified Data.Text.Encoding as TE
+import Network.HTTP.Client
+import Network.HTTP.Types.Status (statusCode)
+import System.Environment (getEnv, lookupEnv)
 import System.Directory (createDirectoryIfMissing)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 import System.IO (Handle, IOMode (WriteMode), hFlush, hIsTerminalDevice, hPutStr, stderr, stdin, stdout, withFile)
 import System.Process (readCreateProcessWithExitCode, shell)
+
+-- Variable interpolation: ${VAR_NAME} from environment
+interpolateVars :: Text -> IO Text
+interpolateVars text = go text
+  where
+    go t = case T.breakOn "${" t of
+      (before, after) 
+        | T.null after -> pure before
+        | otherwise -> case T.breakOn "}" (T.drop 2 after) of
+          (varName, rest') 
+            | T.null rest' -> pure (before <> after)  -- unmatched ${
+            | otherwise -> do
+              val <- lookupEnv (T.unpack varName)
+              let replacement = maybe "" T.pack val
+              interpolated <- go (T.drop 1 rest')  -- skip the closing }
+              pure (before <> replacement <> interpolated)
+
+-- Apply variable interpolation to step text fields
+interpolateStep :: Step -> IO Step
+interpolateStep step@StepEcho{} = do
+  newText <- interpolateVars (stepText step)
+  pure step { stepText = newText }
+interpolateStep step@StepExec{} = do
+  newCommand <- interpolateVars (stepCommand step)
+  pure step { stepCommand = newCommand }
+interpolateStep step@StepHttp{} = do
+  newUrl <- interpolateVars (httpUrl (stepHttp step))
+  newBody <- case httpBody (stepHttp step) of
+    Nothing -> pure Nothing
+    Just b -> Just <$> interpolateVars b
+  pure step { stepHttp = (stepHttp step) { httpUrl = newUrl, httpBody = newBody } }
+interpolateStep step = pure step
 
 data RunConfig = RunConfig
   { runAutoApprove :: Bool,
@@ -112,9 +151,12 @@ runSteps config handle workflow state stepIndex (step : rest) = do
       stepNameText = stepDisplayName step
       currentStepName = stepNameOf step
 
+  -- Apply variable interpolation before execution
+  step' <- interpolateStep step
+
   logEvent handle workflow stepState (Just stepIndex) currentStepName "step_started" ("Starting step: " <> stepNameText) Nothing
 
-  execution <- executeStep config step
+  execution <- executeStep config step'
   case execution of
     Left err -> do
       logEvent handle workflow stepState (Just stepIndex) currentStepName "step_failed" err (Just RunFailed)
@@ -135,6 +177,8 @@ executeStep _ StepExec {stepCommand} = do
     ExitSuccess -> pure (Right "exec command completed")
     ExitFailure code -> pure (Left ("exec command failed with exit code " <> T.pack (show code)))
 executeStep config StepApprove {stepGate} = evaluateApproval config stepGate
+executeStep _ StepHttp {stepHttp} = executeHttpStep stepHttp
+executeStep _ StepEnv {stepEnvRequired} = validateEnv stepEnvRequired
 
 evaluateApproval :: RunConfig -> ApprovalGate -> IO (Either Text Text)
 evaluateApproval config gate
@@ -159,11 +203,55 @@ stepDisplayName :: Step -> Text
 stepDisplayName StepExec {stepName} = maybe "exec" id stepName
 stepDisplayName StepEcho {stepName} = maybe "echo" id stepName
 stepDisplayName StepApprove {stepName} = maybe "approve" id stepName
+stepDisplayName StepHttp {stepName} = maybe "http" id stepName
+stepDisplayName StepEnv {stepName} = maybe "env" id stepName
 
 stepNameOf :: Step -> Maybe Text
 stepNameOf StepExec {stepName} = stepName
 stepNameOf StepEcho {stepName} = stepName
 stepNameOf StepApprove {stepName} = stepName
+stepNameOf StepHttp {stepName} = stepName
+stepNameOf StepEnv {stepName} = stepName
+
+validateEnv :: [Text] -> IO (Either Text Text)
+validateEnv [] = pure (Right "no environment variables required")
+validateEnv required = do
+  missing <- filterM (fmap not . isPresent) required
+  if null missing
+    then pure (Right ("validated environment variables: " <> T.intercalate ", " required))
+    else pure (Left ("missing required environment variables: " <> T.intercalate ", " missing))
+  where
+    isPresent var = do
+      result <- lookupEnv (T.unpack var)
+      pure (case result of
+        Nothing -> False
+        Just "" -> False
+        _ -> True)
+
+executeHttpStep :: HttpStep -> IO (Either Text Text)
+executeHttpStep httpStep = do
+  let urlText = httpUrl httpStep
+      methodText = httpMethod httpStep
+      mBody = httpBody httpStep
+  
+  case parseUrl (T.unpack urlText) of
+    Left err -> pure (Left ("invalid URL: " <> urlText <> " - " <> T.pack (show err)))
+    Right req -> do
+      let req' = req
+            { method = TE.encodeUtf8 methodText
+            }
+          req'' = case mBody of
+            Nothing -> req'
+            Just body -> req' { requestBody = RequestBodyLBS (BSL.fromStrict (TE.encodeUtf8 body)) }
+      
+      manager <- newManager defaultManagerSettings
+      result <- tryHttp manager req''
+      case result of
+        Left err -> pure (Left ("HTTP request failed: " <> T.pack (show err)))
+        Right resp -> pure (Right ("HTTP " <> methodText <> " " <> urlText <> " -> " <> T.pack (show (statusCode (responseStatus resp)))))
+
+tryHttp :: Manager -> Request -> IO (Either HttpException (Response BSL.ByteString))
+tryHttp manager req = try (httpLbs req manager)
 
 logEvent :: Handle -> Workflow -> RunState -> Maybe Int -> Maybe Text -> Text -> Text -> Maybe RunStatus -> IO ()
 logEvent handle workflow state stepIndex stepName eventName message statusOverride = do
