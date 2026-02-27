@@ -1,0 +1,15 @@
+name: basic
+version: 1
+steps:
+  - kind: echo
+    name: announce
+    text: "Starting krill workflow"
+  - kind: approve
+    name: manual-gate
+    message: "Allow command execution?"
+  - kind: exec
+    name: run-command
+    command: "echo 'Krill executed command step'"
+  - kind: echo
+    name: done
+    text: "Workflow complete"

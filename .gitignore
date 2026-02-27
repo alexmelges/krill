@@ -1,0 +1,9 @@
+/dist-newstyle/
+/.cabal/
+/.xdg-cache/
+/.xdg-config/
+/.xdg-state/
+/.ghc.environment.*
+/.cabal-sandbox/
+.cabal-sandbox/
+/.krill/
